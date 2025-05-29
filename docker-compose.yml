@@ -2,44 +2,133 @@ version: '3.8'
 
 services:
   telegram-bot:
-    build: .
-    container_name: telegram-archive-bot
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: telegram-archive-bot-v2
     restart: unless-stopped
     environment:
+      # إعدادات Telethon (Userbot)
       - API_ID=${API_ID}
       - API_HASH=${API_HASH}
-      - BOT_TOKEN=${BOT_TOKEN}
       - PHONE_NUMBER=${PHONE_NUMBER}
+      - STRING_SESSION=${STRING_SESSION}
+      
+      # إعدادات Bot Token
+      - BOT_TOKEN=${BOT_TOKEN}
+      
+      # إعدادات القناة والمدراء
       - SOURCE_CHANNEL=${SOURCE_CHANNEL}
       - ADMIN_IDS=${ADMIN_IDS}
+      
+      # إعدادات إضافية
+      - DEBUG=${DEBUG:-false}
       - ENVIRONMENT=production
+      
+      # إعدادات Docker
+      - PYTHONUNBUFFERED=1
+      - TZ=UTC
+    
     volumes:
-      - bot_data:/app/archive
+      # البيانات الدائمة
+      - bot_archive:/app/archive
       - bot_sessions:/app/sessions
       - bot_logs:/app/logs
       - bot_exports:/app/exports
       - bot_backups:/app/backups
+      - bot_config:/app/config
+      
+      # قاعدة البيانات
+      - bot_database:/app/archive.db
+    
     networks:
       - bot_network
+    
     healthcheck:
-      test: ["CMD", "python", "-c", "import sqlite3; conn = sqlite3.connect('archive.db'); conn.close()"]
+      test: ["CMD", "python", "-c", "import sys; sys.path.append('/app'); from utils.diagnostics import check_database; exit(0 if check_database()['success'] else 1)"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 60s
+    
+    # إعدادات الموارد
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+    
+    # إعادة التشغيل التلقائي
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # خدمة مراقبة اختيارية
+  bot-monitor:
+    image: prom/node-exporter:latest
+    container_name: telegram-bot-monitor
+    restart: unless-stopped
+    ports:
+      - "9100:9100"
+    networks:
+      - bot_network
+    profiles:
+      - monitoring
 
 volumes:
-  bot_data:
+  bot_archive:
     driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/archive
+  
   bot_sessions:
     driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/sessions
+  
   bot_logs:
     driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/logs
+  
   bot_exports:
     driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/exports
+  
   bot_backups:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/backups
+  
+  bot_config:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/config
+  
+  bot_database:
     driver: local
 
 networks:
   bot_network:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

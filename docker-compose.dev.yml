@@ -1,0 +1,41 @@
+# ملف Docker Compose للتطوير
+version: '3.8'
+
+services:
+  telegram-bot-dev:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: telegram-archive-bot-dev
+    restart: "no"
+    environment:
+      - API_ID=${API_ID}
+      - API_HASH=${API_HASH}
+      - PHONE_NUMBER=${PHONE_NUMBER}
+      - STRING_SESSION=${STRING_SESSION}
+      - BOT_TOKEN=${BOT_TOKEN}
+      - SOURCE_CHANNEL=${SOURCE_CHANNEL}
+      - ADMIN_IDS=${ADMIN_IDS}
+      - DEBUG=true
+      - ENVIRONMENT=development
+    
+    volumes:
+      # ربط الكود للتطوير المباشر
+      - .:/app
+      - /app/__pycache__
+      - /app/.pytest_cache
+    
+    networks:
+      - bot_network_dev
+    
+    # تشغيل في وضع التطوير
+    command: ["python", "run.py", "--debug"]
+    
+    # إعدادات التطوير
+    stdin_open: true
+    tty: true
+
+networks:
+  bot_network_dev:
+    driver: bridge
