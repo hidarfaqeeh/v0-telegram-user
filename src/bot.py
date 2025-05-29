@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-بوت أرشفة تليغرام - الفئة الرئيسية
-"""
+class TelegramArchiveBot:
+    """فئة بوت أرشفة تليغرام الرئيسية"""
 
 import asyncio
 import os
