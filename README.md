@@ -170,7 +170,7 @@ python run.py --setup
 ⭐ **إذا أعجبك المشروع، لا تنس إعطاؤه نجمة!**
 \`\`\`
 
-```plaintext file="requirements.txt"
+\`\`\`plaintext file="requirements.txt"
 # مكتبات بوت أرشفة تليغرام - الإصدار 2.0
 telethon>=1.28.5
 python-telegram-bot>=20.0
