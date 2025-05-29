@@ -3,39 +3,43 @@
 """
 بوت أرشفة تليغرام - الفئة الرئيسية
 """
-
 import asyncio
-import os
-import json
-import sqlite3
 import logging
-import sys
-from datetime import datetime, timedelta
-from typing import Optional, List, Dict
-from pathlib import Path
 
-from telethon import TelegramClient, events
-from telethon.sessions import StringSession
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
 
-from config import Config
-from utils.logger import setup_logging
+# إعداد تسجيل الأحداث
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 
-logger = setup_logging()
+class TelegramBot:
+    def __init__(self, token):
+        self.token = token
+        self.bot_app = ApplicationBuilder().token(self.token).build()
 
-class TelegramArchiveBot:
-    """فئة بوت أرشفة تليغرام الرئيسية"""
-    
-    def __init__(self, debug=False):
-        """تهيئة البوت"""
-        logger.info("🚀 بدء تهيئة بوت الأرشفة...")
-        
-        # وضع التصحيح
-        self.debug = debug
-        if debug:
-            logger.setLevel(logging.DEBUG)
-            logger.debug("🐞 تم تفعيل وضع التصحيح")
+    def add_handler(self, handler):
+        self.bot_app.add_handler(handler)
+
+    async def start(self):
+        await self.bot_app.initialize()
+
+    async def run(self):
+        # تشغيل Bot
+        async with self.bot_app:
+            await self.bot_app.start()
+            await self.bot_app.updater.start_polling(drop_pending_updates=True)
+            
+            # انتظار إيقاف البوت
+            try:
+                # إبقاء البوت يعمل
+                await asyncio.Event().wait()
+            except (KeyboardInterrupt, asyncio.CancelledError):
+                logger.info("⏹️ تم إيقاف البوت بواسطة المستخدم")
+            finally:
+                await self.bot_app.updater.stop()
+                await self.bot_app.stop()
         
         # تحميل الإعدادات
         self.config = Config()
