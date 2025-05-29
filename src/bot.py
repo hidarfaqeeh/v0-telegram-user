@@ -888,7 +888,790 @@ class TelegramArchiveBot:
             else:
                 await update.message.reply_text(media_info, parse_mode='Markdown')
 
-    # باقي الدوال ستكون في الجزء التالي...
+    async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """عرض إحصائيات الأرشيف المحسنة"""
+        if not self.is_admin(update.effective_user.id):
+            return
+        
+        try:
+            cursor = self.conn.cursor()
+            
+            # إجمالي الرسائل
+            cursor.execute("SELECT COUNT(*) FROM archived_messages")
+            total_messages = cursor.fetchone()[0]
+            
+            # رسائل اليوم
+            today = datetime.now().date()
+            cursor.execute(
+                "SELECT COUNT(*) FROM archived_messages WHERE date LIKE ?",
+                (f"{today}%",)
+            )
+            today_messages = cursor.fetchone()[0]
+            
+            # رسائل هذا الشهر
+            this_month = today.strftime("%Y-%m")
+            cursor.execute(
+                "SELECT COUNT(*) FROM archived_messages WHERE date LIKE ?",
+                (f"{this_month}%",)
+            )
+            month_messages = cursor.fetchone()[0]
+            
+            # إحصائيات الوسائط
+            cursor.execute("""
+                SELECT media_type, COUNT(*) 
+                FROM archived_messages 
+                WHERE media_type IS NOT NULL 
+                GROUP BY media_type
+            """)
+            media_stats = cursor.fetchall()
+            
+            # أحدث رسالة
+            cursor.execute(
+                "SELECT date FROM archived_messages ORDER BY date DESC LIMIT 1"
+            )
+            latest = cursor.fetchone()
+            latest_date = latest[0] if latest else "لا توجد رسائل"
+            
+            # حجم قاعدة البيانات
+            db_size = Path('archive.db').stat().st_size / (1024 * 1024)  # MB
+            
+            # إحصائيات التفاعلات
+            cursor.execute("SELECT SUM(views), SUM(forwards), SUM(replies) FROM archived_messages")
+            interaction_stats = cursor.fetchone()
+            total_views = interaction_stats[0] or 0
+            total_forwards = interaction_stats[1] or 0
+            total_replies = interaction_stats[2] or 0
+            
+            status_text = f"""
+📊 **إحصائيات الأرشيف المحسنة:**
+
+📈 **الرسائل:**
+• إجمالي الرسائل: `{total_messages:,}`
+• رسائل اليوم: `{today_messages:,}`
+• رسائل هذا الشهر: `{month_messages:,}`
+
+📊 **التفاعلات:**
+• إجمالي المشاهدات: `{total_views:,}`
+• إجمالي الإعادات: `{total_forwards:,}`
+• إجمالي الردود: `{total_replies:,}`
+
+📎 **الوسائط:**"""
+            
+            if media_stats:
+                for media_type, count in media_stats:
+                    media_icon = {
+                        "photo": "🖼️", "video": "🎥", "document": "📄", 
+                        "audio": "🎵", "voice": "🎤", "sticker": "🎭"
+                    }.get(media_type, "📎")
+                    status_text += f"\n• {media_icon} {media_type}: `{count:,}`"
+            else:
+                status_text += "\n• لا توجد وسائط مؤرشفة"
+
+            status_text += f"""
+
+🕐 **التوقيت:**
+• آخر رسالة مؤرشفة: `{latest_date}`
+• وقت التحديث: `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`
+
+⚙️ **النظام:**
+• القناة المصدر: `{self.config.SOURCE_CHANNEL or 'غير محددة'}`
+• حجم قاعدة البيانات: `{db_size:.2f} MB`
+• Userbot: {'🟢 متصل' if self.userbot and self.userbot.is_connected() else '🔴 غير متصل'}
+• Bot: {'🟢 يعمل' if self.is_running else '🔴 متوقف'}
+            """
+            
+            await update.message.reply_text(status_text, parse_mode='Markdown')
+            
+        except Exception as e:
+            await update.message.reply_text(f"❌ خطأ في جلب الإحصائيات: {e}")
+
+    async def cmd_browse(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """تصفح الأرشيف المحسن"""
+        if not self.is_admin(update.effective_user.id):
+            return
+        
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT DISTINCT year FROM archived_messages ORDER BY year DESC")
+            years = [row[0] for row in cursor.fetchall()]
+            
+            if not years:
+                await update.message.reply_text("📭 لا توجد رسائل مؤرشفة بعد")
+                return
+            
+            keyboard = []
+            for year in years:
+                cursor.execute(
+                    "SELECT COUNT(*) FROM archived_messages WHERE year = ?", (year,)
+                )
+                count = cursor.fetchone()[0]
+                keyboard.append([
+                    InlineKeyboardButton(
+                        f"📅 {year} ({count:,} رسالة)",
+                        callback_data=f"browse_year_{year}"
+                    )
+                ])
+            
+            keyboard.append([InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="main_menu")])
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await update.message.reply_text(
+                "📂 اختر السنة للتصفح:",
+                reply_markup=reply_markup
+            )
+            
+        except Exception as e:
+            await update.message.reply_text(f"❌ خطأ في تصفح الأرشيف: {e}")
+
+    async def cmd_search(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """البحث في الأرشيف المحسن"""
+        if not self.is_admin(update.effective_user.id):
+            return
+        
+        if not context.args:
+            await update.message.reply_text(
+                "🔍 **استخدم:** `/search كلمة البحث`\n"
+                "**مثال:** `/search مرحبا`\n\n"
+                "💡 **نصائح البحث:**\n"
+                "• يمكن البحث في النصوص والتسميات التوضيحية\n"
+                "• البحث يدعم الكلمات العربية والإنجليزية\n"
+                "• استخدم كلمات مفتاحية قصيرة للنتائج الأفضل",
+                parse_mode='Markdown'
+            )
+            return
+        
+        search_term = " ".join(context.args)
+        
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """SELECT message_id, date, content, media_type, views, forwards 
+                   FROM archived_messages 
+                   WHERE content LIKE ? 
+                   ORDER BY date DESC LIMIT 20""",
+                (f"%{search_term}%",)
+            )
+            results = cursor.fetchall()
+            
+            if not results:
+                await update.message.reply_text(
+                    f"❌ لم يتم العثور على نتائج لـ: **{search_term}**\n\n"
+                    f"💡 جرب:\n"
+                    f"• كلمات مختلفة\n"
+                    f"• كلمات أقصر\n"
+                    f"• البحث بالإنجليزية إذا كان النص إنجليزي",
+                    parse_mode='Markdown'
+                )
+                return
+            
+            response = f"🔍 **نتائج البحث عن:** `{search_term}`\n"
+            response += f"📊 **تم العثور على {len(results)} نتيجة**\n\n"
+            
+            for i, (msg_id, date, content, media_type, views, forwards) in enumerate(results[:10], 1):
+                preview = content[:100] + "..." if len(content) > 100 else content
+                media_icon = {
+                    "photo": "🖼️", "video": "🎥", "document": "📄", 
+                    "audio": "🎵", "voice": "🎤", "sticker": "🎭"
+                }.get(media_type, "💬")
+                
+                response += f"{i}. {media_icon} **{date[:10]}** (ID: `{msg_id}`)\n"
+                if views or forwards:
+                    response += f"   👀 {views or 0} | 🔄 {forwards or 0}\n"
+                response += f"   `{preview}`\n\n"
+            
+            if len(results) > 10:
+                response += f"... و {len(results) - 10} نتيجة أخرى\n\n"
+            
+            response += f"💡 استخدم `/view_post message_id` لعرض منشور محدد"
+            
+            await update.message.reply_text(response, parse_mode='Markdown')
+            
+        except Exception as e:
+            await update.message.reply_text(f"❌ خطأ في البحث: {e}")
+
+    async def cmd_archive_today(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """أرشفة منشورات اليوم"""
+        if not self.is_admin(update.effective_user.id):
+            return
+        
+        if not self.userbot or not self.userbot.is_connected():
+            await update.message.reply_text("❌ Userbot غير متصل")
+            return
+        
+        if not self.config.SOURCE_CHANNEL:
+            await update.message.reply_text("❌ لم يتم تحديد القناة المصدر. استخدم `/set_channel @channel`")
+            return
+        
+        await update.message.reply_text("🔄 جاري أرشفة منشورات اليوم...")
+        
+        try:
+            today = datetime.now().date()
+            count = await self.archive_date_range_with_progress(today, today, update)
+            await update.message.reply_text(f"✅ تم أرشفة **{count}** رسالة من اليوم", parse_mode='Markdown')
+        except Exception as e:
+            await update.message.reply_text(f"❌ خطأ في الأرشفة: {e}")
+
+    async def cmd_archive_day(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """أرشفة يوم محدد"""
+        if not self.is_admin(update.effective_user.id):
+            return
+        
+        if not context.args:
+            await update.message.reply_text(
+                "📅 **استخدم:** `/archive_day YYYY-MM-DD`\n"
+                "**مثال:** `/archive_day 2025-05-29`",
+                parse_mode='Markdown'
+            )
+            return
+        
+        try:
+            date_str = context.args[0]
+            target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            
+            await update.message.reply_text(f"🔄 جاري أرشفة **{date_str}**...", parse_mode='Markdown')
+            count = await self.archive_date_range_with_progress(target_date, target_date, update)
+            await update.message.reply_text(f"✅ تم أرشفة **{count}** رسالة من **{date_str}**", parse_mode='Markdown')
+            
+        except ValueError:
+            await update.message.reply_text("❌ تنسيق التاريخ غير صحيح. استخدم: **YYYY-MM-DD**", parse_mode='Markdown')
+        except Exception as e:
+            await update.message.reply_text(f"❌ خطأ في الأرشفة: {e}")
+
+    async def cmd_export(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """تصدير أرشيف يوم كملف JSON"""
+        if not self.is_admin(update.effective_user.id):
+            return
+        
+        if not context.args:
+            await update.message.reply_text(
+                "📤 **استخدم:** `/export YYYY-MM-DD`\n"
+                "**مثال:** `/export 2025-05-29`",
+                parse_mode='Markdown'
+            )
+            return
+        
+        try:
+            date_str = context.args[0]
+            target_date = datetime.strptime(date_str, "%Y-%m-%d")
+            
+            # جلب رسائل اليوم
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """SELECT * FROM archived_messages 
+                   WHERE date LIKE ? 
+                   ORDER BY date""",
+                (f"{date_str}%",)
+            )
+            
+            rows = cursor.fetchall()
+            
+            if not rows:
+                await update.message.reply_text(f"❌ لا توجد رسائل في **{date_str}**", parse_mode='Markdown')
+                return
+            
+            # تحضير البيانات
+            messages = []
+            for row in rows:
+                messages.append({
+                    'message_id': row[1],
+                    'channel_id': row[2],
+                    'date': row[3],
+                    'content': row[6],
+                    'media_type': row[7],
+                    'file_id': row[8],
+                    'file_name': row[9],
+                    'file_size': row[10],
+                    'views': row[12],
+                    'forwards': row[13],
+                    'replies': row[14],
+                    'reactions': row[15],
+                    'edit_date': row[16]
+                })
+            
+            # إنشاء ملف JSON
+            export_data = {
+                'date': date_str,
+                'total_messages': len(messages),
+                'exported_at': datetime.now().isoformat(),
+                'source_channel': self.config.SOURCE_CHANNEL,
+                'messages': messages
+            }
+            
+            # حفظ في مجلد التصدير
+            exports_dir = Path('exports')
+            exports_dir.mkdir(exist_ok=True)
+            
+            filename = exports_dir / f"archive_{date_str}.json"
+            
+            with open(filename, 'w', encoding='utf-8') as f:
+                json.dump(export_data, f, ensure_ascii=False, indent=2)
+            
+            # إرسال الملف
+            with open(filename, 'rb') as f:
+                await update.message.reply_document(
+                    document=f,
+                    filename=f"archive_{date_str}.json",
+                    caption=f"📤 **أرشيف {date_str}**\n📊 **{len(messages)}** رسالة",
+                    parse_mode='Markdown'
+                )
+            
+            logger.info(f"📤 تم تصدير أرشيف {date_str} - {len(messages)} رسالة")
+            
+        except ValueError:
+            await update.message.reply_text("❌ تنسيق التاريخ غير صحيح. استخدم: **YYYY-MM-DD**", parse_mode='Markdown')
+        except Exception as e:
+            await update.message.reply_text(f"❌ خطأ في التصدير: {e}")
+
+    async def cmd_set_channel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """تحديد القناة المصدر"""
+        if not self.is_admin(update.effective_user.id):
+            return
+        
+        if not context.args:
+            await update.message.reply_text(
+                "📢 **استخدم:** `/set_channel @channel_username`\n"
+                "**أو:** `/set_channel channel_id`\n"
+                "**مثال:** `/set_channel @my_channel`",
+                parse_mode='Markdown'
+            )
+            return
+        
+        channel = context.args[0]
+        self.config.SOURCE_CHANNEL = channel
+        
+        # حفظ في قاعدة البيانات
+        try:
+            self.config.save_to_database("source_channel", channel)
+            
+            await update.message.reply_text(f"✅ تم تحديد القناة المصدر: **{channel}**", parse_mode='Markdown')
+            
+            # إعادة تشغيل مراقب الرسائل
+            if self.userbot and self.userbot.is_connected():
+                await update.message.reply_text("🔄 جاري إعادة تشغيل مراقب الرسائل...")
+                
+        except Exception as e:
+            await update.message.reply_text(f"❌ خطأ في حفظ الإعدادات: {e}")
+
+    async def cmd_diagnostics(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """تشخيص سريع للبوت"""
+        if not self.is_admin(update.effective_user.id):
+            return
+        
+        await update.message.reply_text("🔍 جاري تشغيل التشخيص السريع...")
+        
+        try:
+            from utils.diagnostics import run_quick_diagnostics
+            results = await run_quick_diagnostics(self.config)
+            
+            # تحضير تقرير التشخيص
+            report = "🔍 **تقرير التشخيص السريع:**\n\n"
+            
+            # عرض نتائج الفحوصات
+            for check_name, result in results['checks'].items():
+                status = "✅" if result['success'] else "❌"
+                report += f"{status} **{check_name}:** {result['message']}\n"
+            
+            # عرض الأخطاء
+            if results['errors']:
+                report += f"\n🔴 **الأخطاء ({len(results['errors'])}):**\n"
+                for error in results['errors']:
+                    report += f"• {error}\n"
+            
+            # عرض الاقتراحات
+            if results['suggestions']:
+                report += f"\n💡 **الاقتراحات:**\n"
+                for suggestion in results['suggestions']:
+                    report += f"• {suggestion}\n"
+            
+            if not results['errors']:
+                report += f"\n🎉 **البوت يعمل بشكل طبيعي!**"
+            
+            await update.message.reply_text(report, parse_mode='Markdown')
+            
+        except Exception as e:
+            await update.message.reply_text(f"❌ خطأ في التشخيص: {e}")
+
+    async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """معالج الأزرار التفاعلية المحسن"""
+        query = update.callback_query
+        await query.answer()
+        
+        if not self.is_admin(query.from_user.id):
+            return
+        
+        data = query.data
+        
+        try:
+            if data == "status":
+                await self.show_status_callback(query)
+            elif data == "browse":
+                await self.show_browse_callback(query)
+            elif data == "help":
+                await self.show_help_callback(query)
+            elif data == "main_menu":
+                await self.show_main_menu_callback(query)
+            elif data == "search_menu":
+                await self.show_search_menu_callback(query)
+            elif data == "archive_menu":
+                await self.show_archive_menu_callback(query)
+            elif data.startswith("browse_year_"):
+                year = int(data.split("_")[-1])
+                await self.show_months_callback(query, year)
+            elif data.startswith("browse_month_"):
+                parts = data.split("_")
+                year, month = int(parts[2]), int(parts[3])
+                await self.show_days_callback(query, year, month)
+            elif data.startswith("browse_day_"):
+                parts = data.split("_")
+                year, month, day = int(parts[2]), int(parts[3]), int(parts[4])
+                await self.show_day_messages_callback(query, year, month, day)
+            elif data.startswith("nav_"):
+                await self.handle_navigation_callback(query, data)
+        except Exception as e:
+            logger.error(f"❌ خطأ في معالجة الزر: {e}")
+            await query.edit_message_text(f"❌ حدث خطأ: {e}")
+
+    async def show_status_callback(self, query):
+        """عرض الإحصائيات عبر الزر"""
+        try:
+            cursor = self.conn.cursor()
+            
+            cursor.execute("SELECT COUNT(*) FROM archived_messages")
+            total = cursor.fetchone()[0]
+            
+            today = datetime.now().date()
+            cursor.execute("SELECT COUNT(*) FROM archived_messages WHERE date LIKE ?", (f"{today}%",))
+            today_count = cursor.fetchone()[0]
+            
+            # إحصائيات الوسائط
+            cursor.execute("SELECT COUNT(*) FROM archived_messages WHERE media_type IS NOT NULL")
+            media_count = cursor.fetchone()[0]
+            
+            status_text = f"""
+📊 **إحصائيات سريعة:**
+
+📈 إجمالي الرسائل: `{total:,}`
+📅 رسائل اليوم: `{today_count:,}`
+📎 الوسائط: `{media_count:,}`
+📂 القناة: `{self.config.SOURCE_CHANNEL or 'غير محددة'}`
+🤖 الحالة: {'🟢 يعمل' if self.is_running else '🔴 متوقف'}
+
+🕐 آخر تحديث: `{datetime.now().strftime('%H:%M:%S')}`
+            """
+            
+            keyboard = [[InlineKeyboardButton("🔙 العودة", callback_data="main_menu")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(status_text, reply_markup=reply_markup, parse_mode='Markdown')
+            
+        except Exception as e:
+            await query.edit_message_text(f"❌ خطأ في جلب الإحصائيات: {e}")
+
+    async def show_browse_callback(self, query):
+        """عرض قائمة السنوات"""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT DISTINCT year FROM archived_messages ORDER BY year DESC")
+            years = [row[0] for row in cursor.fetchall()]
+            
+            if not years:
+                await query.edit_message_text("📭 لا توجد رسائل مؤرشفة")
+                return
+            
+            keyboard = []
+            for year in years:
+                cursor.execute("SELECT COUNT(*) FROM archived_messages WHERE year = ?", (year,))
+                count = cursor.fetchone()[0]
+                keyboard.append([
+                    InlineKeyboardButton(
+                        f"📅 {year} ({count:,} رسالة)",
+                        callback_data=f"browse_year_{year}"
+                    )
+                ])
+            
+            keyboard.append([InlineKeyboardButton("🔙 العودة", callback_data="main_menu")])
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text("📂 اختر السنة:", reply_markup=reply_markup)
+            
+        except Exception as e:
+            await query.edit_message_text(f"❌ خطأ في التصفح: {e}")
+
+    async def show_help_callback(self, query):
+        """عرض المساعدة عبر الزر"""
+        help_text = """
+🆘 **مساعدة سريعة:**
+
+**📁 الأرشفة:**
+• `/archive_today` - أرشفة اليوم
+• `/archive_day YYYY-MM-DD` - أرشفة يوم محدد
+• `/archive_month YYYY-MM` - أرشفة شهر كامل
+
+**🔍 البحث:**
+• `/search كلمة` - البحث في المحتوى
+
+**⚙️ الإدارة:**
+• `/status` - الإحصائيات
+• `/set_channel @channel` - تحديد القناة
+• `/export YYYY-MM-DD` - تصدير أرشيف
+
+💡 **نصيحة:** استخدم الأزرار للتنقل السهل!
+        """
+        
+        keyboard = [[InlineKeyboardButton("🔙 العودة", callback_data="main_menu")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(help_text, reply_markup=reply_markup, parse_mode='Markdown')
+
+    async def show_main_menu_callback(self, query):
+        """عرض القائمة الرئيسية"""
+        keyboard = [
+            [InlineKeyboardButton("📊 الإحصائيات", callback_data="status")],
+            [InlineKeyboardButton("📅 تصفح الأرشيف", callback_data="browse")],
+            [InlineKeyboardButton("🔍 البحث", callback_data="search_menu")],
+            [InlineKeyboardButton("📁 الأرشفة", callback_data="archive_menu")],
+            [InlineKeyboardButton("⚙️ المساعدة", callback_data="help")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        welcome_text = f"""
+🤖 **بوت أرشفة تليغرام المحسن**
+
+📊 **الحالة الحالية:**
+• القناة المصدر: `{self.config.SOURCE_CHANNEL or 'غير محددة'}`
+• Userbot: {'🟢 متصل' if self.userbot and self.userbot.is_connected() else '🔴 غير متصل'}
+
+اختر من القائمة أدناه:
+        """
+        
+        await query.edit_message_text(
+            welcome_text,
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+
+    async def show_search_menu_callback(self, query):
+        """عرض قائمة البحث"""
+        search_text = """
+🔍 **قائمة البحث:**
+
+💡 **كيفية البحث:**
+• استخدم `/search كلمة البحث`
+• مثال: `/search مرحبا`
+
+🎯 **نصائح للبحث الأفضل:**
+• استخدم كلمات مفتاحية قصيرة
+• جرب كلمات مختلفة إذا لم تجد نتائج
+• البحث يشمل النصوص والتسميات التوضيحية
+
+📊 **أنواع المحتوى القابل للبحث:**
+• النصوص العادية
+• التسميات التوضيحية للصور والفيديوهات
+• أسماء الملفات
+        """
+        
+        keyboard = [[InlineKeyboardButton("🔙 العودة", callback_data="main_menu")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(search_text, reply_markup=reply_markup, parse_mode='Markdown')
+
+    async def show_archive_menu_callback(self, query):
+        """عرض قائمة الأرشفة"""
+        archive_text = """
+📁 **قائمة الأرشفة:**
+
+⚡ **أرشفة سريعة:**
+• `/archive_today` - أرشفة منشورات اليوم
+
+📅 **أرشفة بالتاريخ:**
+• `/archive_day 2024-05-29` - يوم محدد
+• `/archive_month 2024-05` - شهر كامل
+• `/archive_year 2024` - سنة كاملة
+
+🎯 **أرشفة متقدمة:**
+• `/archive_range 2024-01-01 2024-03-31` - نطاق مخصص
+• `/archive_all` - جميع المنشورات (تحذير!)
+
+⚠️ **تنبيه:** الأرشفة الكبيرة قد تستغرق وقتاً طويلاً
+        """
+        
+        keyboard = [[InlineKeyboardButton("🔙 العودة", callback_data="main_menu")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(archive_text, reply_markup=reply_markup, parse_mode='Markdown')
+
+    async def show_months_callback(self, query, year: int):
+        """عرض شهور السنة"""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "SELECT DISTINCT month FROM archived_messages WHERE year = ? ORDER BY month",
+                (year,)
+            )
+            months = [row[0] for row in cursor.fetchall()]
+            
+            keyboard = []
+            month_names = [
+                "يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو",
+                "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"
+            ]
+            
+            for month in months:
+                cursor.execute(
+                    "SELECT COUNT(*) FROM archived_messages WHERE year = ? AND month = ?",
+                    (year, month)
+                )
+                count = cursor.fetchone()[0]
+                keyboard.append([
+                    InlineKeyboardButton(
+                        f"🗓️ {month_names[month-1]} ({count:,})",
+                        callback_data=f"browse_month_{year}_{month}"
+                    )
+                ])
+            
+            keyboard.append([InlineKeyboardButton("🔙 العودة", callback_data="browse")])
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(f"📅 شهور عام {year}:", reply_markup=reply_markup)
+            
+        except Exception as e:
+            await query.edit_message_text(f"❌ خطأ في عرض الشهور: {e}")
+
+    async def show_days_callback(self, query, year: int, month: int):
+        """عرض أيام الشهر"""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "SELECT DISTINCT day FROM archived_messages WHERE year = ? AND month = ? ORDER BY day",
+                (year, month)
+            )
+            days = [row[0] for row in cursor.fetchall()]
+            
+            keyboard = []
+            for day in days:
+                cursor.execute(
+                    "SELECT COUNT(*) FROM archived_messages WHERE year = ? AND month = ? AND day = ?",
+                    (year, month, day)
+                )
+                count = cursor.fetchone()[0]
+                keyboard.append([
+                    InlineKeyboardButton(
+                        f"📆 {day:02d} ({count:,})",
+                        callback_data=f"browse_day_{year}_{month}_{day}"
+                    )
+                ])
+            
+            keyboard.append([InlineKeyboardButton("🔙 العودة", callback_data=f"browse_year_{year}")])
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            month_names = [
+                "يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو",
+                "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"
+            ]
+            
+            await query.edit_message_text(
+                f"🗓️ أيام {month_names[month-1]} {year}:",
+                reply_markup=reply_markup
+            )
+            
+        except Exception as e:
+            await query.edit_message_text(f"❌ خطأ في عرض الأيام: {e}")
+
+    async def show_day_messages_callback(self, query, year: int, month: int, day: int):
+        """عرض رسائل اليوم مع التنقل المحسن"""
+        try:
+            user_id = query.from_user.id
+            
+            # حفظ جلسة التصفح
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """INSERT OR REPLACE INTO browse_sessions 
+                   (user_id, current_year, current_month, current_day, current_index) 
+                   VALUES (?, ?, ?, ?, ?)""",
+                (user_id, year, month, day, 0)
+            )
+            self.conn.commit()
+            
+            # جلب رسائل اليوم
+            cursor.execute(
+                """SELECT * FROM archived_messages 
+                   WHERE year = ? AND month = ? AND day = ? 
+                   ORDER BY date""",
+                (year, month, day)
+            )
+            messages = cursor.fetchall()
+            
+            if not messages:
+                await query.edit_message_text("❌ لا توجد رسائل في هذا اليوم")
+                return
+            
+            # عرض أول رسالة
+            await self.display_message_detailed(query, messages[0], 0, len(messages))
+            
+        except Exception as e:
+            await query.edit_message_text(f"❌ خطأ في عرض الرسائل: {e}")
+
+    async def handle_navigation_callback(self, query, data):
+        """معالجة أزرار التنقل"""
+        try:
+            user_id = query.from_user.id
+            
+            # جلب جلسة التصفح
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "SELECT * FROM browse_sessions WHERE user_id = ?",
+                (user_id,)
+            )
+            session = cursor.fetchone()
+            
+            if not session:
+                await query.edit_message_text("❌ جلسة التصفح منتهية الصلاحية")
+                return
+            
+            year, month, day, current_index = session[1], session[2], session[3], session[4]
+            
+            # تحديد الاتجاه
+            if "prev" in data:
+                new_index = max(0, current_index - 1)
+            elif "next" in data:
+                # جلب العدد الإجمالي للرسائل
+                cursor.execute(
+                    "SELECT COUNT(*) FROM archived_messages WHERE year = ? AND month = ? AND day = ?",
+                    (year, month, day)
+                )
+                total_messages = cursor.fetchone()[0]
+                new_index = min(total_messages - 1, current_index + 1)
+            else:
+                return
+            
+            # تحديث الفهرس في الجلسة
+            cursor.execute(
+                "UPDATE browse_sessions SET current_index = ? WHERE user_id = ?",
+                (new_index, user_id)
+            )
+            self.conn.commit()
+            
+            # جلب الرسالة الجديدة
+            cursor.execute(
+                """SELECT * FROM archived_messages 
+                   WHERE year = ? AND month = ? AND day = ? 
+                   ORDER BY date LIMIT 1 OFFSET ?""",
+                (year, month, day, new_index)
+            )
+            message = cursor.fetchone()
+            
+            if message:
+                cursor.execute(
+                    "SELECT COUNT(*) FROM archived_messages WHERE year = ? AND month = ? AND day = ?",
+                    (year, month, day)
+                )
+                total_messages = cursor.fetchone()[0]
+                
+                await self.display_message_detailed(query, message, new_index, total_messages)
+            
+        except Exception as e:
+            await query.edit_message_text(f"❌ خطأ في التنقل: {e}")
+
     async def run(self):
         """تشغيل البوت الرئيسي"""
         logger.info("🚀 بدء تشغيل بوت الأرشفة المحسن...")
