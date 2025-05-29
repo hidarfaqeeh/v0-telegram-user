@@ -1,6 +1,6 @@
-# مكتبات بوت أرشفة تليغرام - إصدار الإنتاج
+# مكتبات بوت أرشفة تليغرام - الإصدار 2.0
 telethon>=1.28.5
 python-telegram-bot>=20.0
 python-dotenv>=1.0.0
 aiofiles>=23.0.0
-psutil>=5.9.0
+requests>=2.25.0
