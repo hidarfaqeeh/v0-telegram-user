@@ -1,0 +1,91 @@
+{
+  "apiVersion": "v1",
+  "spec": {
+    "kind": "Workflow",
+    "spec": {
+      "type": "build",
+      "context": {
+        "projectId": "telegram-archive-bot",
+        "workflowId": "build-and-deploy"
+      },
+      "steps": [
+        {
+          "name": "Build Docker Image",
+          "type": "build",
+          "spec": {
+            "source": {
+              "type": "git",
+              "gitConfig": {
+                "repoUrl": "https://github.com/YOUR_USERNAME/telegram-archive-bot",
+                "targetBranch": "main"
+              }
+            },
+            "buildConfig": {
+              "type": "docker",
+              "dockerConfig": {
+                "dockerfilePath": "./Dockerfile",
+                "buildContext": "."
+              }
+            }
+          }
+        },
+        {
+          "name": "Deploy Service",
+          "type": "deploy",
+          "spec": {
+            "serviceId": "telegram-archive-bot-service",
+            "deploymentConfig": {
+              "replicas": 1,
+              "resources": {
+                "cpu": "0.5",
+                "memory": "1Gi"
+              },
+              "environmentVariables": [
+                {
+                  "name": "API_ID",
+                  "value": "${API_ID}"
+                },
+                {
+                  "name": "API_HASH",
+                  "value": "${API_HASH}"
+                },
+                {
+                  "name": "BOT_TOKEN",
+                  "value": "${BOT_TOKEN}"
+                },
+                {
+                  "name": "PHONE_NUMBER",
+                  "value": "${PHONE_NUMBER}"
+                },
+                {
+                  "name": "SOURCE_CHANNEL",
+                  "value": "${SOURCE_CHANNEL}"
+                },
+                {
+                  "name": "ADMIN_IDS",
+                  "value": "${ADMIN_IDS}"
+                },
+                {
+                  "name": "ENVIRONMENT",
+                  "value": "production"
+                }
+              ],
+              "volumes": [
+                {
+                  "name": "bot-data",
+                  "mountPath": "/app/archive",
+                  "size": "10Gi"
+                },
+                {
+                  "name": "bot-sessions",
+                  "mountPath": "/app/sessions",
+                  "size": "1Gi"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

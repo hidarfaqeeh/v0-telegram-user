@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  telegram-bot:
+    build: .
+    container_name: telegram-archive-bot
+    restart: unless-stopped
+    environment:
+      - API_ID=${API_ID}
+      - API_HASH=${API_HASH}
+      - BOT_TOKEN=${BOT_TOKEN}
+      - PHONE_NUMBER=${PHONE_NUMBER}
+      - SOURCE_CHANNEL=${SOURCE_CHANNEL}
+      - ADMIN_IDS=${ADMIN_IDS}
+      - ENVIRONMENT=production
+    volumes:
+      - bot_data:/app/archive
+      - bot_sessions:/app/sessions
+      - bot_logs:/app/logs
+      - bot_exports:/app/exports
+      - bot_backups:/app/backups
+    networks:
+      - bot_network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sqlite3; conn = sqlite3.connect('archive.db'); conn.close()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  bot_data:
+    driver: local
+  bot_sessions:
+    driver: local
+  bot_logs:
+    driver: local
+  bot_exports:
+    driver: local
+  bot_backups:
+    driver: local
+
+networks:
+  bot_network:
+    driver: bridge
