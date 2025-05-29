@@ -787,21 +787,79 @@ ENVIRONMENT=development
             logger.info("✅ تم تشغيل البوت بنجاح!")
             logger.info("📱 Userbot: " + ("متصل ويراقب الرسائل الجديدة" if userbot_success else "غير متصل"))
             logger.info("🤖 Bot: جاهز لاستقبال الأوامر")
+        
+            # تشغيل Bot بطريقة آمنة
+            try:
+                # إنشاء مهام منفصلة
+                tasks = []
             
-            # تشغيل Bot
-            await self.bot_app.run_polling(
-                drop_pending_updates=True,
-                close_loop=False
-            )
+                # مهمة تشغيل البوت
+                bot_task = asyncio.create_task(
+                    self.bot_app.run_polling(
+                        drop_pending_updates=True,
+                        close_loop=False,
+                        stop_signals=None
+                    )
+                )
+                tasks.append(bot_task)
             
-        except KeyboardInterrupt:
-            logger.info("⏹️ تم إيقاف البوت بواسطة المستخدم")
-        except Exception as e:
-            logger.error(f"❌ خطأ في تشغيل البوت: {e}")
-        finally:
-            self.is_running = False
-            if self.userbot:
+                # مهمة مراقبة Userbot
+                if self.userbot and self.userbot.is_connected():
+                    userbot_task = asyncio.create_task(self.userbot.run_until_disconnected())
+                    tasks.append(userbot_task)
+            
+                # انتظار المهام
+                await asyncio.gather(*tasks, return_exceptions=True)
+            
+            except asyncio.CancelledError:
+                logger.info("⏹️ تم إلغاء المهام")
+            except Exception as e:
+                logger.error(f"❌ خطأ في تشغيل المهام: {e}")
+        
+    except KeyboardInterrupt:
+        logger.info("⏹️ تم إيقاف البوت بواسطة المستخدم")
+    except Exception as e:
+        logger.error(f"❌ خطأ في تشغيل البوت: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        await self.cleanup()
+    
+    return True
+
+async def cleanup(self):
+    """تنظيف الموارد"""
+    logger.info("🧹 جاري تنظيف الموارد...")
+    
+    self.is_running = False
+    
+    try:
+        # إيقاف Bot
+        if self.bot_app:
+            try:
+                await self.bot_app.stop()
+                await self.bot_app.shutdown()
+                logger.info("✅ تم إيقاف Bot")
+            except Exception as e:
+                logger.warning(f"⚠️ خطأ في إيقاف Bot: {e}")
+        
+        # إيقاف Userbot
+        if self.userbot:
+            try:
                 await self.userbot.disconnect()
-            if self.conn:
+                logger.info("✅ تم قطع اتصال Userbot")
+            except Exception as e:
+                logger.warning(f"⚠️ خطأ في قطع اتصال Userbot: {e}")
+        
+        # إغلاق قاعدة البيانات
+        if self.conn:
+            try:
                 self.conn.close()
-            logger.info("🔚 تم إغلاق البوت")
+                logger.info("✅ تم إغلاق قاعدة البيانات")
+            except Exception as e:
+                logger.warning(f"⚠️ خطأ في إغلاق قاعدة البيانات: {e}")
+                
+    except Exception as e:
+        logger.error(f"❌ خطأ في التنظيف: {e}")
+    
+    logger.info("🔚 تم تنظيف جميع الموارد")

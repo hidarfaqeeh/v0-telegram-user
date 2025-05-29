@@ -1,28 +1,52 @@
 #!/bin/bash
-set -e
 
-echo "🐳 بدء تشغيل بوت أرشفة تليغرام"
+# Telegram Archive Bot Startup Script - مُحدث لحل مشاكل asyncio
+
+echo "🚀 Starting Telegram Archive Bot..."
 
 # التحقق من متغيرات البيئة المطلوبة
-if [ -z "$BOT_TOKEN" ] || [ "$BOT_TOKEN" = "your_bot_token_here" ]; then
-    echo "❌ BOT_TOKEN غير محدد أو يحتوي على قيمة افتراضية"
-    echo "💡 يرجى تعديل متغيرات البيئة"
-    exit 1
-fi
+required_vars=("API_ID" "API_HASH" "BOT_TOKEN")
 
-if [ -z "$ADMIN_IDS" ] || [ "$ADMIN_IDS" = "123456789,987654321" ]; then
-    echo "❌ ADMIN_IDS غير محدد أو يحتوي على قيمة افتراضية"
-    echo "💡 يرجى تعديل متغيرات البيئة"
-    exit 1
-fi
+for var in "${required_vars[@]}"; do
+    if [ -z "${!var}" ]; then
+        echo "❌ Error: $var environment variable is not set"
+        exit 1
+    fi
+done
 
-echo "✅ متغيرات البيئة الأساسية محددة"
+echo "✅ Environment variables validated"
 
 # إنشاء المجلدات المطلوبة
 mkdir -p logs sessions archive exports backups config
 
-echo "✅ المجلدات جاهزة"
+echo "✅ Directories created"
 
-# تشغيل الأمر المرسل
-echo "🚀 بدء تشغيل البوت..."
-exec "$@"
+# تثبيت nest-asyncio إذا لم يكن مثبت
+python -c "import nest_asyncio" 2>/dev/null || pip install nest-asyncio
+
+echo "✅ Dependencies checked"
+
+# التحقق من قاعدة البيانات
+python -c "
+import sqlite3
+import sys
+try:
+    conn = sqlite3.connect('archive.db')
+    conn.close()
+    print('✅ Database connection test passed')
+except Exception as e:
+    print(f'❌ Database error: {e}')
+    sys.exit(1)
+"
+
+echo "✅ Database check completed"
+
+# بدء التطبيق مع معالجة أفضل للأخطاء
+echo "🤖 Starting bot application..."
+
+# استخدام الملف المُصلح
+if [ -f "main_fixed.py" ]; then
+    exec python main_fixed.py
+else
+    exec python run.py
+fi

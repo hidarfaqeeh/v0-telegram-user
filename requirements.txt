@@ -1,9 +1,12 @@
-# مكتبات بوت أرشفة تليغرام - مع دعم قواعد البيانات المختلفة
+# مكتبات بوت أرشفة تليغرام - مع إصلاح مشاكل asyncio
 telethon>=1.28.5
 python-telegram-bot>=20.0
 python-dotenv>=1.0.0
 aiofiles>=23.0.0
 requests>=2.25.0
+
+# لحل مشاكل event loop
+nest-asyncio>=1.5.6
 
 # قواعد البيانات
 # SQLite (مدمج في Python)

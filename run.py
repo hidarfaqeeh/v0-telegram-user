@@ -76,14 +76,44 @@ async def main():
     # إنشاء وتشغيل البوت
     print("\n🚀 بدء تشغيل بوت الأرشفة...")
     bot = TelegramArchiveBot(debug=args.debug)
-    await bot.run()
+    
+    try:
+        await bot.run()
+    except KeyboardInterrupt:
+        print("\n⏹️ تم إيقاف البوت بواسطة المستخدم")
+    except Exception as e:
+        print(f"\n❌ خطأ في تشغيل البوت: {e}")
+        if args.debug:
+            import traceback
+            traceback.print_exc()
+
+def run_bot():
+    """تشغيل البوت مع إدارة صحيحة لـ event loop"""
+    try:
+        # محاولة الحصول على event loop الحالي
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # إذا كان هناك loop يعمل، استخدم nest_asyncio
+            try:
+                import nest_asyncio
+                nest_asyncio.apply()
+                loop.run_until_complete(main())
+            except ImportError:
+                print("❌ يرجى تثبيت nest_asyncio: pip install nest_asyncio")
+                print("أو استخدم: python -c \"import asyncio; asyncio.run(main())\"")
+                sys.exit(1)
+        else:
+            # إذا لم يكن هناك loop يعمل، استخدم الطريقة العادية
+            loop.run_until_complete(main())
+    except RuntimeError:
+        # إذا لم يكن هناك event loop، أنشئ واحد جديد
+        asyncio.run(main())
 
 if __name__ == "__main__":
     try:
-        # تشغيل البوت
-        asyncio.run(main())
+        run_bot()
     except KeyboardInterrupt:
-        print("\n⏹️ تم إيقاف البوت بواسطة المستخدم")
+        print("\n⏹️ تم إيقاف البوت")
     except Exception as e:
         print(f"\n❌ خطأ عام: {e}")
         if "--debug" in sys.argv:
