@@ -10,7 +10,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-class TelegramBot:
+class TelegramArchiveBot:
     def __init__(self, config, db, userbot):
         self.config = config
         self.db = db
