@@ -8,7 +8,7 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-class TelegramBot:
+class TelegramArchiveBot:
     def __init__(self, token, admin_ids):
         self.token = token
         self.admin_ids = admin_ids
